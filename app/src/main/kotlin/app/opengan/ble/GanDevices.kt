@@ -110,7 +110,7 @@ class GanRobotClient(private val conn: GattConnection) {
                 if (sawBusy && !busy) return@withTimeout
                 // If the robot never reports busy (e.g. a no-op chunk), don't wait forever.
                 if (!sawBusy && SystemClock.elapsedRealtime() - startedAt > 3000) return@withTimeout
-                delay(20)
+                delay(10)
             }
         }
     }

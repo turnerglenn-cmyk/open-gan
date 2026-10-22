@@ -76,6 +76,35 @@ class RobotOrientation private constructor(
             )
         }
 
+        /**
+         * Work out the orientation from any robot command: pair the quarter turns the
+         * robot made ([GanRobotProtocol.executed]) with the cube moves the smart cube
+         * reported, in order. Returns null until turns on all three axes were seen
+         * (D, R or L, F or B). Throws if the reports contradict each other.
+         */
+        fun fromObservations(robotTurns: List<Move>, cubeMoves: List<Move>): RobotOrientation? {
+            val seen = mutableMapOf<Face, Pair<Face, Boolean>>()
+            for ((robot, cube) in robotTurns.zip(cubeMoves)) {
+                if (robot.turns == 2 || cube.turns == 2) continue
+                val entry = cube.face to (robot.turns != cube.turns)
+                val previous = seen.put(robot.face, entry)
+                require(previous == null || previous == entry) { "Robot $robot was seen as both ${previous?.first} and $cube" }
+            }
+            fun axis(a: Face, b: Face): Pair<Pair<Face, Boolean>, Pair<Face, Boolean>>? {
+                seen[a]?.let { return it to (it.first.opposite to it.second) }
+                seen[b]?.let { return (it.first.opposite to it.second) to it }
+                return null
+            }
+            val d = seen[Face.D] ?: return null
+            val (r, l) = axis(Face.R, Face.L) ?: return null
+            val (f, b) = axis(Face.F, Face.B) ?: return null
+            require(setOf(d.first.axis, r.first.axis, f.first.axis).size == 3) { "Observed turns are not on three different axes" }
+            return RobotOrientation(mapOf(Face.D to d, Face.R to r, Face.L to l, Face.F to f, Face.B to b))
+        }
+
+        /** Robot turns used for a dedicated orientation check: one per axis. */
+        val TEST_TURNS: List<Move> = listOf(Move(Face.R, 1), Move(Face.F, 1), Move(Face.D, 1))
+
         /** For tests and simulations: an arbitrary mapping. */
         fun of(robotToCube: Map<Face, Pair<Face, Boolean>>) = RobotOrientation(robotToCube)
     }

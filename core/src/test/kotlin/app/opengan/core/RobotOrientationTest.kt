@@ -86,3 +86,29 @@ class RobotOrientationTest {
         }
     }
 }
+
+class RobotObservationTest {
+    @Test
+    fun robotScrambleRevealsOrientation() {
+        val s = Scrambler(Random(11))
+        val o = RobotOrientation.of(
+            mapOf(Face.R to (Face.B to false), Face.L to (Face.F to false), Face.F to (Face.R to false),
+                Face.B to (Face.L to false), Face.D to (Face.D to false)),
+        )
+        repeat(50) {
+            val scramble = s.randomMoves(25, robotSafe = true)
+            val turns = GanRobotProtocol.executed(scramble)
+            val reports = turns.map(o::toCube)
+            // Known after the first three scramble moves.
+            val firstThree = GanRobotProtocol.executed(scramble.take(3))
+            assertEquals(o, RobotOrientation.fromObservations(firstThree, reports.take(firstThree.size)))
+            assertEquals(o, RobotOrientation.fromObservations(turns, reports))
+        }
+    }
+
+    @Test
+    fun notEnoughTurnsGivesNull() {
+        val turns = Move.parseSequence("R F")
+        assertEquals(null, RobotOrientation.fromObservations(turns, turns))
+    }
+}

@@ -22,6 +22,9 @@ class Scrambler(private val random: Random = Random.Default) {
             val beforeLast = out.getOrNull(out.size - 2)
             // No repeated face, and no X Y X on the same axis (e.g. R L R), which would cancel.
             if (last != null && last.face == face) continue
+            // Robot scrambles open with one turn per axis, so a smart cube in the robot
+            // reveals how it is placed from the scramble itself (no extra test turns).
+            if (robotSafe && out.size < 3 && out.any { it.face.axis == face.axis }) continue
             if (last != null && beforeLast != null && last.face.axis == face.axis && beforeLast.face == face) continue
             out += Move(face, random.nextInt(1, 4))
         }

@@ -38,6 +38,11 @@ object GanRobotProtocol {
         return faceIndex * 3 + (move.turns - 1)
     }
 
+    /** The turns the robot physically makes, in order: doubles become two quarter turns when split. */
+    fun executed(moves: List<Move>, splitDoubles: Boolean = true): List<Move> =
+        if (!splitDoubles) moves
+        else moves.flatMap { if (it.turns == 2) listOf(Move(it.face, 1), Move(it.face, 1)) else listOf(it) }
+
     /**
      * Encode a scramble into the sequence of writes to send.
      *
@@ -45,10 +50,7 @@ object GanRobotProtocol {
      *   default they are sent as two quarter turns.
      */
     fun encode(moves: List<Move>, splitDoubles: Boolean = true): List<ByteArray> {
-        val expanded = if (splitDoubles) moves.flatMap {
-            if (it.turns == 2) listOf(Move(it.face, 1), Move(it.face, 1)) else listOf(it)
-        } else moves
-        val codes = expanded.map(::code)
+        val codes = executed(moves, splitDoubles).map(::code)
         val bytes = codes.chunked(2).map { pair -> ((pair[0] shl 4) or (pair.getOrNull(1) ?: NO_MOVE)).toByte() }
         return bytes.chunked(MAX_BYTES_PER_WRITE).map { it.toByteArray() }
     }

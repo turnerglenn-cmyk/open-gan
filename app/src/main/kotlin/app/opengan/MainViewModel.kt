@@ -5,7 +5,6 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.opengan.core.cube.CubieCube
-import app.opengan.core.cube.Face
 import app.opengan.core.cube.Move
 import app.opengan.core.gan.GanCubeEvent
 import app.opengan.ble.GanRobotClient
@@ -165,20 +164,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun robotScramble(moves: List<Move> = _scramble.value) {
         if (!canRobotScramble(moves)) return
         runRobot("scramble") { robot ->
-            // The timer tracks the scramble in the smart cube's frame, which depends on how it sits in the robot.
-            if (devices.cube.value != null) {
-                val o = ensureOrientation(robot)
-                timer.setScramble(moves.map(o::toCube))
+            if (devices.cube.value == null) {
+                execute(robot, moves)
+                return@runRobot
             }
-            execute(robot, moves)
+            // Robot scrambles open with one turn per axis, so the smart cube's reports of the
+            // scramble itself reveal how it sits in the robot: no extra test turns needed.
+            timer.reset()
+            val o = executeObserving(robot, moves) ?: _orientation.value
+            // The timer tracks the scramble in the smart cube's frame.
+            timer.setScramble(if (o != null) moves.map(o::toCube) else moves)
+            if (o == null) devices.report("Couldn't tell how the cube sits in the robot, so the timer may not arm")
         }
     }
 
     /**
      * Have the robot solve the cube by undoing every move since it was last solved.
-     * With a smart cube connected, the app first finds how the cube sits in the
-     * robot (test turns of R, F and D, each undone), then translates the solution
-     * into robot faces and works around the face the robot grips.
+     * With a smart cube connected, the robot first makes three quick test turns
+     * (R F D, one command) to see how the cube sits in it. They are not undone
+     * separately: they join the move history, so the solution undoes them too.
      * Without a smart cube it undoes the robot's own scrambles.
      */
     fun robotSolve() {
@@ -186,13 +190,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Keep the robot's turns from starting or stopping the solve timer.
         timer.reset()
         runRobot("solve", after = { timer.setScramble(_scramble.value) }) { robot ->
-            val o = if (devices.cube.value != null) checkOrientation(robot) else RobotOrientation.IDENTITY
-            val moves = RobotSolve.solutionFor(history ?: error("Cube state unknown"), o)
-            execute(robot, moves)
+            val o = if (devices.cube.value != null) {
+                _robotProgress.value = RobotProgress(0, 1, "Checking how the cube sits in the robot")
+                executeObserving(robot, RobotOrientation.TEST_TURNS)
+                    ?: error("The smart cube didn't report the robot's test turns. Is it the cube in the robot?")
+            } else {
+                RobotOrientation.IDENTITY
+            }
+            execute(robot, RobotSolve.solutionFor(history ?: error("Cube state unknown"), o))
         }
     }
 
-    /** Run the orientation test on demand, e.g. after putting the cube back in the robot. */
+    /** Run the orientation check on demand: three test turns and back, in one command. */
     fun robotCheckOrientation() {
         if (devices.cube.value == null) {
             devices.report("Put a connected smart cube in the robot first")
@@ -200,45 +209,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         timer.reset()
         runRobot("orientation check", after = { timer.setScramble(_scramble.value) }) { robot ->
-            val o = checkOrientation(robot)
+            val test = RobotOrientation.TEST_TURNS
+            val o = executeObserving(robot, test + test.reversed().map { it.inverse })
+                ?: error("The smart cube didn't report the robot's test turns. Is it the cube in the robot?")
             devices.report(if (o.isIdentity) "Cube is placed as expected" else "Cube orientation found: ${o.describe()}")
         }
     }
 
-    private suspend fun ensureOrientation(robot: GanRobotClient): RobotOrientation {
-        _orientation.value?.let { return it }
-        val previous = timer.phase
-        timer.reset()
-        val o = checkOrientation(robot)
-        if (previous !is SmartTimer.Phase.Idle) timer.setScramble(_scramble.value)
-        return o
-    }
-
-    private suspend fun checkOrientation(robot: GanRobotClient): RobotOrientation {
-        val seen = listOf(Face.R, Face.F, Face.D).mapIndexed { i, face ->
-            _robotProgress.value = RobotProgress(i, 3, "Checking how the cube sits in the robot")
-            testTurn(robot, face)
-        }
-        return RobotOrientation.fromTestTurns(seen[0], seen[1], seen[2]).also { _orientation.value = it }
-    }
-
-    /** Turn one robot face a quarter turn and back, returning the cube move it produced. */
-    private suspend fun testTurn(robot: GanRobotClient, face: Face): Move {
+    /**
+     * Run a robot command while collecting the smart cube's reports of its turns,
+     * and work out the orientation from them. Null if the reports don't cover
+     * all three axes.
+     */
+    private suspend fun executeObserving(robot: GanRobotClient, moves: List<Move>): RobotOrientation? {
+        val turns = GanRobotProtocol.executed(moves)
         val seen = mutableListOf<Move>()
         testTurnMoves = seen
         try {
-            robot.scramble(listOf(Move(face, 1)))
-            withTimeoutOrNull(2000) { while (seen.isEmpty()) delay(20) }
-            val forward = seen.toList()
-            robot.scramble(listOf(Move(face, 3)))
-            // Let the undo turn arrive so it isn't mistaken for the next test turn.
-            withTimeoutOrNull(2000) { while (seen.size < forward.size + 1) delay(20) }
-            return forward.singleOrNull() ?: throw IllegalStateException(
-                "Robot $face produced ${forward.size} cube turns (expected 1). Is the connected smart cube the one in the robot?",
-            )
+            execute(robot, moves)
+            // BLE reports can trail the robot's idle status slightly.
+            withTimeoutOrNull(1000) { while (seen.size < turns.size) delay(10) }
         } finally {
             testTurnMoves = null
         }
+        val o = RobotOrientation.fromObservations(turns, seen) ?: return null
+        _orientation.value = o
+        return o
     }
 
     private suspend fun execute(robot: GanRobotClient, moves: List<Move>) {
