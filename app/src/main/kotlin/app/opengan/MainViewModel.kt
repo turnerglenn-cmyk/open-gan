@@ -8,6 +8,7 @@ import app.opengan.core.cube.CubieCube
 import app.opengan.core.cube.Move
 import app.opengan.core.gan.GanCubeEvent
 import app.opengan.core.robot.GanRobotProtocol
+import app.opengan.core.robot.RobotSolve
 import app.opengan.core.scramble.Scrambler
 import app.opengan.core.timer.Penalty
 import app.opengan.core.timer.SmartTimer
@@ -66,6 +67,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _tapTimer = MutableStateFlow<TapTimer>(TapTimer.Idle)
     val tapTimer: StateFlow<TapTimer> = _tapTimer
 
+    /**
+     * Moves made since the cube was last known solved, used to build a robot solution.
+     * Null when the state is unknown (e.g. the cube reported a state we didn't track).
+     */
+    private var history: MutableList<Move>? = mutableListOf()
+    private val _canSolve = MutableStateFlow(false)
+    val canSolve: StateFlow<Boolean> = _canSolve
+
     val cubeConnected = devices.cube.map { it != null }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val robotConnected = devices.robot.map { it != null }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -83,14 +92,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // After a solve the result stays on screen until the cube is turned again.
                 if (timer.phase is SmartTimer.Phase.Finished) timer.setScramble(_scramble.value)
                 timer.onMove(e.move, e.localTimestamp, e.cubeTimestamp)
+                history?.add(e.move)
+                if (timer.cube.isSolved) history = mutableListOf()
             }
-            is GanCubeEvent.FaceletsEvent -> timer.onFacelets(e.state)
+            is GanCubeEvent.FaceletsEvent -> {
+                val tracked = timer.cube
+                timer.onFacelets(e.state)
+                if (e.state.isSolved) history = mutableListOf() else if (e.state != tracked) history = null
+            }
             is GanCubeEvent.BatteryEvent -> _cubeInfo.update { it.copy(battery = e.batteryLevel) }
             is GanCubeEvent.HardwareEvent -> _cubeInfo.update { it.copy(hardware = e.hardwareName, firmware = e.softwareVersion) }
             is GanCubeEvent.DisconnectEvent -> _cubeInfo.value = CubeInfo()
             is GanCubeEvent.GyroEvent -> Unit
         }
         _cubeState.value = timer.cube
+        updateCanSolve()
+    }
+
+    private fun updateCanSolve() {
+        _canSolve.value = history?.isNotEmpty() == true
     }
 
     fun newScramble() {
@@ -116,20 +136,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         timer.onFacelets(CubieCube.SOLVED)
         _cubeState.value = CubieCube.SOLVED
         timer.setScramble(_scramble.value)
+        history = mutableListOf()
+        updateCanSolve()
     }
 
     fun canRobotScramble(moves: List<Move> = _scramble.value) = GanRobotProtocol.canExecute(moves)
 
     fun robotScramble(moves: List<Move> = _scramble.value) {
+        if (!canRobotScramble(moves)) return
+        runRobot(moves, "scramble")
+    }
+
+    /**
+     * Have the robot solve the cube by undoing every move since it was last solved
+     * (U turns rewritten without U). With a smart cube the history comes from the
+     * cube; without one it is the robot's own scrambles.
+     */
+    fun robotSolve() {
+        val moves = history?.let(RobotSolve::solutionFor) ?: return
+        if (moves.isEmpty()) return
+        // Keep the robot's turns from starting or stopping the solve timer.
+        timer.reset()
+        runRobot(moves, "solve") { timer.setScramble(_scramble.value) }
+    }
+
+    private fun runRobot(moves: List<Move>, what: String, after: () -> Unit = {}) {
         val robot = devices.robot.value ?: return
-        if (_robotProgress.value != null || !canRobotScramble(moves)) return
+        if (_robotProgress.value != null) return
         viewModelScope.launch {
             try {
                 robot.scramble(moves) { done, total -> _robotProgress.value = RobotProgress(done, total) }
+                // With a smart cube connected, its own move events already updated the history.
+                if (devices.cube.value == null) {
+                    history?.addAll(moves)
+                    if (CubieCube.SOLVED.apply(history.orEmpty()).isSolved) history = mutableListOf()
+                }
             } catch (e: Exception) {
-                devices.report("Robot scramble failed: ${e.message}")
+                devices.report("Robot $what failed: ${e.message}")
             } finally {
                 _robotProgress.value = null
+                updateCanSolve()
+                after()
             }
         }
     }

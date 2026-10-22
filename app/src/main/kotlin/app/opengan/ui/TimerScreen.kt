@@ -52,6 +52,7 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
     val robotProgress by vm.robotProgress.collectAsStateWithLifecycle()
     val cube by vm.cubeState.collectAsStateWithLifecycle()
     val tap by vm.tapTimer.collectAsStateWithLifecycle()
+    val canSolve by vm.canSolve.collectAsStateWithLifecycle()
 
     Column(modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         ScrambleText(scramble, applied = (phase as? Phase.Scrambling)?.applied ?: if (phase is Phase.Ready) scramble.size else 0)
@@ -62,6 +63,7 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
                 OutlinedButton(onClick = { vm.robotScramble() }, enabled = robotProgress == null && vm.canRobotScramble(scramble)) {
                     Text(robotProgress?.let { "Robot ${it.done}/${it.total}" } ?: "Robot scramble")
                 }
+                OutlinedButton(onClick = vm::robotSolve, enabled = robotProgress == null && canSolve) { Text("Solve") }
             }
         }
 

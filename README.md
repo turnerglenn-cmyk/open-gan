@@ -10,6 +10,8 @@ No ads, no tracking, no accounts, no internet permission. Funded by donations.
 
 - **GAN Robot**: connect without needing a smart cube, run random scrambles (robot-safe,
   no U turns) or type your own. Works fully offline.
+- **Robot solve**: the robot undoes every move since the cube was last solved (from the smart
+  cube's tracking, or the robot's own scrambles). U turns are rewritten without U.
 - **Smart cube timer**: GAN Gen2, Gen3 and Gen4 protocols (GAN356 i3 / i Carry / i Carry 2,
   GAN12 ui / Maglev, GAN14 ui, GAN Mini ui, Monster Go 3Ai, MoYu AI 2023).
   The timer tracks your scramble move by move, arms itself when the cube is scrambled,

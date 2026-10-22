@@ -32,6 +32,8 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
     val robotConnected by vm.robotConnected.collectAsStateWithLifecycle()
     val progress by vm.robotProgress.collectAsStateWithLifecycle()
     val scramble by vm.scramble.collectAsStateWithLifecycle()
+    val canSolve by vm.canSolve.collectAsStateWithLifecycle()
+    val cubeConnected by vm.cubeConnected.collectAsStateWithLifecycle()
     var manual by rememberSaveable { mutableStateOf("") }
     var manualError by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -58,6 +60,22 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
                 if (!vm.canRobotScramble(scramble)) {
                     Text("This scramble turns U, which the robot can't do. Tap New for a robot-safe one.", style = MaterialTheme.typography.bodySmall)
                 }
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Solve", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    when {
+                        canSolve && cubeConnected -> "The robot undoes every move the smart cube has seen since it was solved."
+                        canSolve -> "The robot undoes its scrambles since the cube was last solved."
+                        cubeConnected -> "Nothing to solve yet, or the cube was connected already scrambled. Solve it once by hand and tap \"Cube is solved\" on the Timer tab."
+                        else -> "Nothing to solve yet. Without a smart cube the robot can only undo its own scrambles."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Button(onClick = vm::robotSolve, enabled = robotConnected && progress == null && canSolve) { Text("Solve") }
             }
         }
 

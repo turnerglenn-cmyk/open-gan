@@ -56,7 +56,9 @@ Key choices:
 
 ## Next (v0.2+)
 
-1. **Random-state scrambles**: port a two-phase solver (cs0x7f/min2phase) and generate
+1. **Two-phase solver (U-free)**: solve any state, not only tracked history, in ~20-25 moves.
+   Today's robot solve undoes history and rewrites U as (R L' F2 B2 R L') D (R L' F2 B2 R L').
+2. **Random-state scrambles**: port a two-phase solver (cs0x7f/min2phase) and generate
    U-free solutions so robot scrambles are WCA-quality.
 2. Robot CFOP-stage scrambles (cross / F2L / OLL / PLL practice) like gan-scrambler.
 3. Solve reconstruction with CFOP step splits (cross, F2L pairs, OLL, PLL) from move data.
