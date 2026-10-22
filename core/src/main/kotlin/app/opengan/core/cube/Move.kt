@@ -4,6 +4,9 @@ enum class Face { U, R, F, D, L, B;
 
     /** Faces on the same axis commute (U/D, R/L, F/B). */
     val axis: Int get() = ordinal % 3
+
+    /** U<->D, R<->L, F<->B. */
+    val opposite: Face get() = entries[(ordinal + 3) % 6]
 }
 
 /** A face turn. [turns] is the number of clockwise quarter turns: 1, 2 or 3 (= prime). */

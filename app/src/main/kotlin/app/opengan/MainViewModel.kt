@@ -5,15 +5,21 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.opengan.core.cube.CubieCube
+import app.opengan.core.cube.Face
 import app.opengan.core.cube.Move
 import app.opengan.core.gan.GanCubeEvent
+import app.opengan.ble.GanRobotClient
 import app.opengan.core.robot.GanRobotProtocol
+import app.opengan.core.robot.RobotOrientation
 import app.opengan.core.robot.RobotSolve
 import app.opengan.core.scramble.Scrambler
 import app.opengan.core.timer.Penalty
 import app.opengan.core.timer.SmartTimer
 import app.opengan.core.timer.Solve
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -26,7 +32,7 @@ import kotlinx.coroutines.launch
 
 data class CubeInfo(val battery: Int? = null, val hardware: String? = null, val firmware: String? = null)
 
-data class RobotProgress(val done: Int, val total: Int)
+data class RobotProgress(val done: Int, val total: Int, val label: String = "Robot is turning")
 
 /** Manual (on-screen) timer used when no smart cube is connected. */
 sealed interface TapTimer {
@@ -75,6 +81,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _canSolve = MutableStateFlow(false)
     val canSolve: StateFlow<Boolean> = _canSolve
 
+    /**
+     * How the smart cube sits in the robot, found with test turns. Null until
+     * checked; reset whenever the cube or robot (re)connects.
+     */
+    private val _orientation = MutableStateFlow<RobotOrientation?>(null)
+    val orientation: StateFlow<RobotOrientation?> = _orientation
+
+    /** Cube moves seen during an orientation test turn. */
+    private var testTurnMoves: MutableList<Move>? = null
+
     val cubeConnected = devices.cube.map { it != null }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val robotConnected = devices.robot.map { it != null }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -82,6 +98,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { _solves.value = app.solves.load() }
         viewModelScope.launch {
             devices.cube.flatMapLatest { it?.events ?: emptyFlow() }.collect { onCubeEvent(it) }
+        }
+        viewModelScope.launch {
+            combine(devices.cube, devices.robot) { c, r -> c to r }.collect { _orientation.value = null }
         }
         newScramble()
     }
@@ -92,6 +111,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // After a solve the result stays on screen until the cube is turned again.
                 if (timer.phase is SmartTimer.Phase.Finished) timer.setScramble(_scramble.value)
                 timer.onMove(e.move, e.localTimestamp, e.cubeTimestamp)
+                testTurnMoves?.add(e.move)
                 history?.add(e.move)
                 if (timer.cube.isSolved) history = mutableListOf()
             }
@@ -144,33 +164,99 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun robotScramble(moves: List<Move> = _scramble.value) {
         if (!canRobotScramble(moves)) return
-        runRobot(moves, "scramble")
+        runRobot("scramble") { robot ->
+            // The timer tracks the scramble in the smart cube's frame, which depends on how it sits in the robot.
+            if (devices.cube.value != null) {
+                val o = ensureOrientation(robot)
+                timer.setScramble(moves.map(o::toCube))
+            }
+            execute(robot, moves)
+        }
     }
 
     /**
-     * Have the robot solve the cube by undoing every move since it was last solved
-     * (U turns rewritten without U). With a smart cube the history comes from the
-     * cube; without one it is the robot's own scrambles.
+     * Have the robot solve the cube by undoing every move since it was last solved.
+     * With a smart cube connected, the app first finds how the cube sits in the
+     * robot (test turns of R, F and D, each undone), then translates the solution
+     * into robot faces and works around the face the robot grips.
+     * Without a smart cube it undoes the robot's own scrambles.
      */
     fun robotSolve() {
-        val moves = history?.let(RobotSolve::solutionFor) ?: return
-        if (moves.isEmpty()) return
+        if (history.isNullOrEmpty()) return
         // Keep the robot's turns from starting or stopping the solve timer.
         timer.reset()
-        runRobot(moves, "solve") { timer.setScramble(_scramble.value) }
+        runRobot("solve", after = { timer.setScramble(_scramble.value) }) { robot ->
+            val o = if (devices.cube.value != null) checkOrientation(robot) else RobotOrientation.IDENTITY
+            val moves = RobotSolve.solutionFor(history ?: error("Cube state unknown"), o)
+            execute(robot, moves)
+        }
     }
 
-    private fun runRobot(moves: List<Move>, what: String, after: () -> Unit = {}) {
+    /** Run the orientation test on demand, e.g. after putting the cube back in the robot. */
+    fun robotCheckOrientation() {
+        if (devices.cube.value == null) {
+            devices.report("Put a connected smart cube in the robot first")
+            return
+        }
+        timer.reset()
+        runRobot("orientation check", after = { timer.setScramble(_scramble.value) }) { robot ->
+            val o = checkOrientation(robot)
+            devices.report(if (o.isIdentity) "Cube is placed as expected" else "Cube orientation found: ${o.describe()}")
+        }
+    }
+
+    private suspend fun ensureOrientation(robot: GanRobotClient): RobotOrientation {
+        _orientation.value?.let { return it }
+        val previous = timer.phase
+        timer.reset()
+        val o = checkOrientation(robot)
+        if (previous !is SmartTimer.Phase.Idle) timer.setScramble(_scramble.value)
+        return o
+    }
+
+    private suspend fun checkOrientation(robot: GanRobotClient): RobotOrientation {
+        val seen = listOf(Face.R, Face.F, Face.D).mapIndexed { i, face ->
+            _robotProgress.value = RobotProgress(i, 3, "Checking how the cube sits in the robot")
+            testTurn(robot, face)
+        }
+        return RobotOrientation.fromTestTurns(seen[0], seen[1], seen[2]).also { _orientation.value = it }
+    }
+
+    /** Turn one robot face a quarter turn and back, returning the cube move it produced. */
+    private suspend fun testTurn(robot: GanRobotClient, face: Face): Move {
+        val seen = mutableListOf<Move>()
+        testTurnMoves = seen
+        try {
+            robot.scramble(listOf(Move(face, 1)))
+            withTimeoutOrNull(2000) { while (seen.isEmpty()) delay(20) }
+            val forward = seen.toList()
+            robot.scramble(listOf(Move(face, 3)))
+            // Let the undo turn arrive so it isn't mistaken for the next test turn.
+            withTimeoutOrNull(2000) { while (seen.size < forward.size + 1) delay(20) }
+            return forward.singleOrNull() ?: throw IllegalStateException(
+                "Robot $face produced ${forward.size} cube turns (expected 1). Is the connected smart cube the one in the robot?",
+            )
+        } finally {
+            testTurnMoves = null
+        }
+    }
+
+    private suspend fun execute(robot: GanRobotClient, moves: List<Move>) {
+        robot.scramble(moves) { done, total -> _robotProgress.value = RobotProgress(done, total) }
+        // With a smart cube connected, its own move events already updated the history.
+        if (devices.cube.value == null) {
+            history?.addAll(moves)
+            if (CubieCube.SOLVED.apply(history.orEmpty()).isSolved) history = mutableListOf()
+        }
+    }
+
+    private fun runRobot(what: String, after: () -> Unit = {}, block: suspend (GanRobotClient) -> Unit) {
         val robot = devices.robot.value ?: return
         if (_robotProgress.value != null) return
+        _robotProgress.value = RobotProgress(0, 1)
         viewModelScope.launch {
             try {
-                robot.scramble(moves) { done, total -> _robotProgress.value = RobotProgress(done, total) }
-                // With a smart cube connected, its own move events already updated the history.
-                if (devices.cube.value == null) {
-                    history?.addAll(moves)
-                    if (CubieCube.SOLVED.apply(history.orEmpty()).isSolved) history = mutableListOf()
-                }
+                block(robot)
             } catch (e: Exception) {
                 devices.report("Robot $what failed: ${e.message}")
             } finally {

@@ -34,6 +34,7 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
     val scramble by vm.scramble.collectAsStateWithLifecycle()
     val canSolve by vm.canSolve.collectAsStateWithLifecycle()
     val cubeConnected by vm.cubeConnected.collectAsStateWithLifecycle()
+    val orientation by vm.orientation.collectAsStateWithLifecycle()
     var manual by rememberSaveable { mutableStateOf("") }
     var manualError by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -75,7 +76,21 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
                     },
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Button(onClick = vm::robotSolve, enabled = robotConnected && progress == null && canSolve) { Text("Solve") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = vm::robotSolve, enabled = robotConnected && progress == null && canSolve) { Text("Solve") }
+                    if (cubeConnected) {
+                        OutlinedButton(onClick = vm::robotCheckOrientation, enabled = robotConnected && progress == null) {
+                            Text("Check orientation")
+                        }
+                    }
+                }
+                if (cubeConnected) {
+                    Text(
+                        orientation?.let { if (it.isIdentity) "Cube is placed as expected." else "Detected: ${it.describe()}" }
+                            ?: "Before solving, the robot turns R, F and D once and back to see how the cube sits in it.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
 
@@ -110,7 +125,7 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
 
         progress?.let {
             Column {
-                Text("Robot is turning… ${it.done}/${it.total}")
+                Text("${it.label}… ${it.done}/${it.total}")
                 LinearProgressIndicator(progress = { if (it.total == 0) 0f else it.done / it.total.toFloat() }, Modifier.fillMaxWidth())
             }
         }
