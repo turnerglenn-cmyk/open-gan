@@ -71,7 +71,7 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
                     when {
                         canSolve && cubeConnected -> "The robot undoes every move the smart cube has seen since it was solved."
                         canSolve -> "The robot undoes its scrambles since the cube was last solved."
-                        cubeConnected -> "Nothing to solve yet, or the cube was connected already scrambled. Solve it once by hand and tap \"Cube is solved\" on the Timer tab."
+                        cubeConnected -> "Nothing to solve yet, or the cube was connected already scrambled. Solve it by hand and tap Reset cube."
                         else -> "Nothing to solve yet. Without a smart cube the robot can only undo its own scrambles."
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -84,6 +84,7 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
                         }
                     }
                 }
+                ResetCubeButton(onReset = vm::resetCube, enabled = progress == null)
                 if (cubeConnected) {
                     Text(
                         orientation?.let { if (it.isIdentity) "Cube is placed as expected." else "Detected: ${it.describe()}" }

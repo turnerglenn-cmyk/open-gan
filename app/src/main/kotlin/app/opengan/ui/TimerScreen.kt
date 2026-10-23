@@ -82,8 +82,8 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
                     CubeNet(cube, Modifier.fillMaxWidth(0.6f))
                     Row {
                         TextButton(onClick = vm::armFreeSolve) { Text("Free solve") }
-                        TextButton(onClick = vm::markCubeSolved) { Text("Cube is solved") }
                     }
+                    ResetCubeButton(onReset = vm::resetCube, enabled = robotProgress == null)
                 } else {
                     BigTime(tapTimeMs(tap))
                     Text(

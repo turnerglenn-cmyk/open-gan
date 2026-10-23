@@ -148,9 +148,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun armFreeSolve() = timer.armFree()
 
-    /** Use when the cube is physically solved but the app thinks otherwise. */
-    fun markCubeSolved() {
+    /**
+     * Reset cube: use when the app lost sync and the cube is physically solved.
+     * Tells the smart cube (if any) its state is solved, forgets the move history
+     * and the cached robot orientation, and starts tracking again from solved.
+     */
+    fun resetCube() {
         viewModelScope.launch { runCatching { devices.cube.value?.markSolved() } }
+        _orientation.value = null
         timer.reset()
         timer.onFacelets(CubieCube.SOLVED)
         _cubeState.value = CubieCube.SOLVED
