@@ -69,6 +69,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _robotProgress = MutableStateFlow<RobotProgress?>(null)
     val robotProgress: StateFlow<RobotProgress?> = _robotProgress
 
+    /** When the last solve in this session was saved, for the celebration. */
+    private val _lastSolveAt = MutableStateFlow<Long?>(null)
+    val lastSolveAt: StateFlow<Long?> = _lastSolveAt
+
     private val _tapTimer = MutableStateFlow<TapTimer>(TapTimer.Idle)
     val tapTimer: StateFlow<TapTimer> = _tapTimer
 
@@ -332,6 +336,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun save(solve: Solve) {
         _solves.update { it + solve }
+        _lastSolveAt.value = SystemClock.elapsedRealtime()
         viewModelScope.launch { app.solves.append(solve) }
     }
 

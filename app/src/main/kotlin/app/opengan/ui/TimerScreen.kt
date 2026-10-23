@@ -1,6 +1,10 @@
 package app.opengan.ui
 
 import android.os.SystemClock
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +30,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -54,7 +60,14 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
     val tap by vm.tapTimer.collectAsStateWithLifecycle()
     val canSolve by vm.canSolve.collectAsStateWithLifecycle()
 
-    Column(modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    // Celebrate solves finished while this screen is open (not old ones when coming back to it).
+    val lastSolveAt by vm.lastSolveAt.collectAsStateWithLifecycle()
+    val seenSolveAt = remember { vm.lastSolveAt.value }
+    val justSolved = lastSolveAt != seenSolveAt
+    val newBest = solves.size > 1 && solves.last().effectiveMs == Stats.best(solves)
+
+    Box(modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         ScrambleText(scramble, applied = (phase as? Phase.Scrambling)?.applied ?: if (phase is Phase.Ready) scramble.size else 0)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -73,8 +86,19 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 if (cubeConnected) {
-                    BigTime(smartTimeMs(phase))
-                    Text(smartHint(phase), style = MaterialTheme.typography.bodyMedium)
+                    BigTime(
+                        smartTimeMs(phase),
+                        when (phase) {
+                            is Phase.Ready -> TimeMood.READY
+                            is Phase.Running -> TimeMood.RUNNING
+                            is Phase.Finished -> TimeMood.DONE
+                            else -> TimeMood.IDLE
+                        },
+                    )
+                    Text(
+                        if (phase is Phase.Finished && newBest && justSolved) "New personal best! 🎉" else smartHint(phase),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                     (phase as? Phase.Finished)?.result?.let {
                         Text("${it.moveCount} moves · %.2f TPS".format(it.tps), style = MaterialTheme.typography.bodySmall)
                     }
@@ -85,10 +109,21 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
                     }
                     ResetCubeButton(onReset = vm::resetCube, enabled = robotProgress == null)
                 } else {
-                    BigTime(tapTimeMs(tap))
+                    BigTime(
+                        tapTimeMs(tap),
+                        when (tap) {
+                            is TapTimer.Running -> TimeMood.RUNNING
+                            is TapTimer.Stopped -> TimeMood.DONE
+                            TapTimer.Idle -> TimeMood.IDLE
+                        },
+                    )
                     Text(
-                        if (tap is TapTimer.Running) "Tap to stop" else "Tap to start · connect a smart cube for automatic timing",
-                        style = MaterialTheme.typography.bodyMedium,
+                        when {
+                            tap is TapTimer.Running -> "Tap to stop"
+                            tap is TapTimer.Stopped && newBest && justSolved -> "New personal best! 🎉"
+                            else -> "Tap to start · connect a smart cube for automatic timing"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
                     )
                 }
             }
@@ -113,6 +148,8 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
             }
         }
     }
+    Confetti(lastSolveAt.takeIf { justSolved })
+    }
 }
 
 @Composable
@@ -128,9 +165,34 @@ private fun ScrambleText(scramble: List<Move>, applied: Int) {
     Text(text, fontFamily = FontFamily.Monospace, fontSize = 20.sp, lineHeight = 28.sp)
 }
 
+private enum class TimeMood { IDLE, READY, RUNNING, DONE }
+
+/** The big clock: bold digits that turn green when armed and pop when a solve finishes. */
 @Composable
-private fun BigTime(ms: Long?) {
-    Text(Stats.format(ms ?: 0L), fontSize = 72.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Light)
+private fun BigTime(ms: Long?, mood: TimeMood) {
+    val scheme = MaterialTheme.colorScheme
+    val color by animateColorAsState(
+        when (mood) {
+            TimeMood.IDLE -> scheme.onBackground.copy(alpha = 0.55f)
+            TimeMood.READY -> scheme.tertiary
+            TimeMood.RUNNING -> scheme.onBackground
+            TimeMood.DONE -> scheme.primary
+        },
+        label = "timeColor",
+    )
+    val scale by animateFloatAsState(
+        if (mood == TimeMood.DONE) 1.12f else 1f,
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "timeScale",
+    )
+    Text(
+        Stats.format(ms ?: 0L),
+        Modifier.scale(scale),
+        color = color,
+        fontSize = 80.sp,
+        fontWeight = FontWeight.Black,
+        style = TextStyle(fontFeatureSettings = "tnum"),
+    )
 }
 
 /** Re-composes about every 30 ms while a timer is running. */
