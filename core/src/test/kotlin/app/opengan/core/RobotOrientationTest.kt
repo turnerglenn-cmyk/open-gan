@@ -111,4 +111,26 @@ class RobotObservationTest {
         val turns = Move.parseSequence("R F")
         assertEquals(null, RobotOrientation.fromObservations(turns, turns))
     }
+
+    @Test
+    fun missedTurnIsNotMistakenForAnOrientation() {
+        val test = RobotOrientation.TEST_TURNS + RobotOrientation.TEST_TURNS.reversed().map { it.inverse }
+        // The robot failed to turn F: every later report would pair with the wrong robot face.
+        val reports = test.filterIndexed { i, _ -> i != 1 }
+        assertEquals(null, RobotOrientation.fromObservations(test, reports))
+        assertEquals(RobotOrientation.IDENTITY, RobotOrientation.fromObservations(test, test))
+    }
+
+    @Test
+    fun correctionReachesTheIntendedState() {
+        val s = Scrambler(Random(7))
+        repeat(50) {
+            val expected = GanRobotProtocol.executed(s.randomMoves(25))
+            val missed = Random(it).nextInt(expected.size)
+            val reported = expected.filterIndexed { i, _ -> i != missed }
+            val fix = RobotOrientation.correction(expected, reported)
+            assertEquals(CubieCube.SOLVED.apply(expected), CubieCube.SOLVED.apply(reported + fix))
+        }
+        assertEquals(emptyList<Move>(), RobotOrientation.correction(Move.parseSequence("R F"), Move.parseSequence("R F")))
+    }
 }

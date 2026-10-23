@@ -56,7 +56,12 @@ object RobotSolve {
      */
     fun solutionFor(history: List<Move>, orientation: RobotOrientation = RobotOrientation.IDENTITY): List<Move> {
         val undo = simplify(history).reversed().map { it.inverse }
-        val reachable = simplify(undo.flatMap { avoiding(it, orientation.gripped) })
+        return forRobot(undo, orientation)
+    }
+
+    /** Robot moves that make the cube moves [cubeMoves], rewriting turns of the gripped face. */
+    fun forRobot(cubeMoves: List<Move>, orientation: RobotOrientation): List<Move> {
+        val reachable = simplify(simplify(cubeMoves).flatMap { avoiding(it, orientation.gripped) })
         return reachable.map { orientation.toRobot(it) ?: error("Cannot turn gripped face ${it.face}") }
     }
 

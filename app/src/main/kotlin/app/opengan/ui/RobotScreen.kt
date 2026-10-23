@@ -87,8 +87,8 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
                 ResetCubeButton(onReset = vm::resetCube, enabled = progress == null)
                 if (cubeConnected) {
                     Text(
-                        orientation?.let { if (it.isIdentity) "Cube is placed as expected." else "Detected: ${it.describe()}" }
-                            ?: "Before solving, the robot turns R, F and D once and back to see how the cube sits in it.",
+                        orientation?.let { if (it.isIdentity) "Last check: cube placed as expected." else "Last check: ${it.describe()}" }
+                            ?: "Before every scramble and solve the robot makes quick test turns to see how the cube sits in it. If it misses a turn, the cube notices and the app fixes it.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

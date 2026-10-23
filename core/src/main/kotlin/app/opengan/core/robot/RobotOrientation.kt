@@ -79,16 +79,18 @@ class RobotOrientation private constructor(
         /**
          * Work out the orientation from any robot command: pair the quarter turns the
          * robot made ([GanRobotProtocol.executed]) with the cube moves the smart cube
-         * reported, in order. Returns null until turns on all three axes were seen
-         * (D, R or L, F or B). Throws if the reports contradict each other.
+         * reported, in order. Returns null unless every turn was reported (a missed
+         * turn would shift the pairing), the reports agree with each other, and turns
+         * on all three axes were seen (D, R or L, F or B).
          */
         fun fromObservations(robotTurns: List<Move>, cubeMoves: List<Move>): RobotOrientation? {
+            if (robotTurns.size != cubeMoves.size) return null
             val seen = mutableMapOf<Face, Pair<Face, Boolean>>()
             for ((robot, cube) in robotTurns.zip(cubeMoves)) {
                 if (robot.turns == 2 || cube.turns == 2) continue
                 val entry = cube.face to (robot.turns != cube.turns)
                 val previous = seen.put(robot.face, entry)
-                require(previous == null || previous == entry) { "Robot $robot was seen as both ${previous?.first} and $cube" }
+                if (previous != null && previous != entry) return null
             }
             fun axis(a: Face, b: Face): Pair<Pair<Face, Boolean>, Pair<Face, Boolean>>? {
                 seen[a]?.let { return it to (it.first.opposite to it.second) }
@@ -98,8 +100,21 @@ class RobotOrientation private constructor(
             val d = seen[Face.D] ?: return null
             val (r, l) = axis(Face.R, Face.L) ?: return null
             val (f, b) = axis(Face.F, Face.B) ?: return null
-            require(setOf(d.first.axis, r.first.axis, f.first.axis).size == 3) { "Observed turns are not on three different axes" }
-            return RobotOrientation(mapOf(Face.D to d, Face.R to r, Face.L to l, Face.F to f, Face.B to b))
+            if (setOf(d.first.axis, r.first.axis, f.first.axis).size != 3) return null
+            val o = RobotOrientation(mapOf(Face.D to d, Face.R to r, Face.L to l, Face.F to f, Face.B to b))
+            // Every report must be exactly what this orientation predicts.
+            return o.takeIf { robotTurns.map(o::toCube) == cubeMoves }
+        }
+
+        /**
+         * Cube moves that take the cube from where it is after [reported] to where
+         * [expected] should have left it, when the robot missed or added turns.
+         * Keeps the matching start and redoes the rest. Empty when nothing went wrong.
+         */
+        fun correction(expected: List<Move>, reported: List<Move>): List<Move> {
+            var k = 0
+            while (k < expected.size && k < reported.size && expected[k] == reported[k]) k++
+            return reported.drop(k).reversed().map { it.inverse } + expected.drop(k)
         }
 
         /** Robot turns used for a dedicated orientation check: one per axis. */
