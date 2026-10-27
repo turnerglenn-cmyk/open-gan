@@ -44,7 +44,8 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
     ) {
         Text("GAN Robot", style = MaterialTheme.typography.headlineSmall)
         if (!robotConnected) {
-            Text("No robot connected. Turn the robot on and connect it from the Devices tab. No smart cube is needed to scramble.")
+            Text("No robot connected. Turn the robot on and tap Connect. If your smart cube is in the robot, the robot wakes it and it connects too. No smart cube is needed to scramble.")
+            ConnectButton(vm.devices, Modifier.fillMaxWidth())
         }
 
         Card(Modifier.fillMaxWidth()) {

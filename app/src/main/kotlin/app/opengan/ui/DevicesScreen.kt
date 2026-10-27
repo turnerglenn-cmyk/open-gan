@@ -11,11 +11,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,6 +42,13 @@ fun DevicesScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
 
     Column(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Devices", style = MaterialTheme.typography.headlineSmall)
+        if (cube == null || robot == null) {
+            Text(
+                "Turn the robot on with the smart cube inside and tap Connect: the robot connects, wakes the cube, and the cube connects.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            ConnectButton(devices, Modifier.fillMaxWidth())
+        }
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
@@ -68,13 +75,13 @@ fun DevicesScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
         }
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = {
+            OutlinedButton(onClick = {
                 when {
                     scanning -> devices.stopScan()
                     devices.hasPermissions() -> devices.startScan()
                     else -> permissionLauncher.launch(devices.requiredPermissions())
                 }
-            }) { Text(if (scanning) "Stop" else "Scan for devices") }
+            }) { Text(if (scanning) "Stop" else "Pick a device") }
             if (scanning || connecting != null) CircularProgressIndicator()
             connecting?.let { Text("Connecting to $it…") }
         }

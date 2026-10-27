@@ -68,6 +68,9 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
 
     Box(modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (!cubeConnected && !robotConnected) {
+            ConnectButton(vm.devices, Modifier.fillMaxWidth().padding(bottom = 8.dp))
+        }
         ScrambleText(scramble, applied = (phase as? Phase.Scrambling)?.applied ?: if (phase is Phase.Ready) scramble.size else 0)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

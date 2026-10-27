@@ -16,6 +16,8 @@ No ads, no tracking, no accounts, no internet permission. Funded by donations.
   GAN12 ui / Maglev, GAN14 ui, GAN Mini ui, Monster Go 3Ai, MoYu AI 2023).
   The timer tracks your scramble move by move, arms itself when the cube is scrambled,
   starts on the first turn and stops when solved. Times come from the cube's own clock.
+- **One-tap Connect**: connects the robot, has it make a quick turn to wake the smart cube inside, then
+  connects the cube. Remembers your devices so the next time is faster.
 - **Robot + cube together**: put the smart cube in the robot and tap *Robot scramble*.
   The app sees the robot's turns, arms the timer, and you just pick up the cube and solve.
 - Live 2D cube view, Ao5 / Ao12 / mean, +2 / DNF, solves stored locally in a plain text file.
