@@ -10,7 +10,7 @@ using namespace og;
 
 namespace {
 
-M5Canvas canvas(&M5Cardputer.Display);
+M5Canvas canvas;  // no parent here: M5Cardputer.Display is not initialised yet during static init
 constexpr int W = 240, H = 135;
 
 enum class Screen { MAIN, SOLVES, HELP, TYPE };
@@ -248,7 +248,7 @@ void draw() {
             case Screen::TYPE: drawType(s); break;
         }
     }
-    canvas.pushSprite(0, 0);
+    canvas.pushSprite(&M5Cardputer.Display, 0, 0);
 }
 
 int lastSolveIndex() {
