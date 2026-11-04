@@ -23,6 +23,11 @@ No ads, no tracking, no accounts, no internet permission. Funded by donations.
 - Live 2D cube view, Ao5 / Ao12 / mean, +2 / DNF, solves stored locally in a plain text file.
 - Manual tap timer when no smart cube is connected.
 
+## Cardputer ADV version
+
+There is also a standalone firmware for the M5Stack Cardputer ADV in [cardputer/](cardputer/README.md):
+robot scrambles, robot solves and the smart cube timer on a pocket screen and keyboard, no phone needed.
+
 ## Building
 
 Requires JDK 17+ and the Android SDK (API 35).

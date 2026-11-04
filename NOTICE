@@ -5,7 +5,8 @@ Licensed under the GNU General Public License v3.0 (see LICENSE).
 This product includes software ported from:
 
 gan-web-bluetooth (https://github.com/afedotov/gan-web-bluetooth)
-  Files: core/src/main/kotlin/app/opengan/core/gan/*, core/.../timer/TimestampFit.kt
+  Files: core/src/main/kotlin/app/opengan/core/gan/*, core/.../timer/TimestampFit.kt,
+         cardputer/src/core/gan.*, cardputer/src/core/timer.cpp (C++ ports)
   MIT License, Copyright (c) Andy Fedotov, https://github.com/afedotov
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -29,7 +30,7 @@ gan-web-bluetooth (https://github.com/afedotov/gan-web-bluetooth)
 The GAN Robot protocol (BLE UUIDs and move encoding) was learned from
 rsimp/gan-scrambler (https://github.com/rsimp/gan-scrambler). That repository
 has no license, so no code was copied; GanRobotProtocol.kt is an independent
-implementation of the documented wire format.
+implementation of the documented wire format (as is cardputer/src/core/robot.*).
 
 Timing smart cube solves from the cube's own clock was pioneered by Chen Shuang
 in csTimer (GPL-3.0). No csTimer code is included.

@@ -1,0 +1,31 @@
+name: Cardputer firmware
+
+on:
+  push:
+    branches: [main]
+    paths: ['cardputer/**', '.github/workflows/cardputer.yml']
+  pull_request:
+    paths: ['cardputer/**', '.github/workflows/cardputer.yml']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core unit tests (host)
+        run: make -C cardputer/test/host
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('cardputer/platformio.ini') }}
+      - name: Build firmware
+        run: |
+          pip install platformio
+          cd cardputer && pio run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-gan-cardputer-firmware
+          path: cardputer/.pio/build/cardputer/firmware.bin
