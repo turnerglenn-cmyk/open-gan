@@ -42,6 +42,8 @@ struct AppState {
     uint32_t tapStartedAt = 0;
     uint32_t tapTimeMs = 0;
     bool cubeConnected = false, robotConnected = false;
+    /** Dropped without the user asking; being reconnected in the background. */
+    bool cubeReconnecting = false, robotReconnecting = false;
     std::string cubeName, robotName;
     bool canSolve = false;
     std::optional<RobotOrientation> orientation;
@@ -82,7 +84,11 @@ private:
     // Worker-side helpers (block). Return false and set err_ on failure.
     bool jobConnect();
     bool findAndConnect(uint32_t timeoutMs, const std::string& remembered, bool wantRobot);
-    int connectNow(const ScannedDevice& d);  // 0 none, 1 cube, 2 robot
+    int connectNow(const ScannedDevice& d, bool resume = false);  // 0 none, 1 cube, 2 robot
+    /** One quiet reconnect attempt for whichever dropped device is due (worker task). */
+    void tryReconnect();
+    bool reconnectWanted();
+    void lost(bool cube);
     bool jobScramble();
     bool jobSolve();
     bool jobCheck();
@@ -100,6 +106,12 @@ private:
     void updateCanSolve();
     void newScrambleKeepingTimer();
     void beep(int freq, int ms);
+
+    /** The cube and robot the user connected, reconnected when they drop on their own. */
+    std::optional<ScannedDevice> cubeTarget_, robotTarget_;
+    uint32_t cubeLostAt_ = 0, robotLostAt_ = 0, nextCubeTry_ = 0, nextRobotTry_ = 0;
+    /** The reconnected cube's first state report resyncs the timer. */
+    bool cubeResync_ = false;
 
     std::unique_ptr<CubeClient> cube_;
     std::unique_ptr<RobotClient> robot_;

@@ -54,10 +54,10 @@ std::vector<ScannedDevice> scan(uint32_t ms) {
     return found;
 }
 
-NimBLEClient* connect(const NimBLEAddress& address) {
+NimBLEClient* connect(const NimBLEAddress& address, uint32_t timeoutMs) {
     NimBLEClient* c = NimBLEDevice::createClient();
     if (!c) return nullptr;
-    c->setConnectTimeout(8000);
+    c->setConnectTimeout(timeoutMs);
     if (!c->connect(address)) {
         NimBLEDevice::deleteClient(c);
         return nullptr;

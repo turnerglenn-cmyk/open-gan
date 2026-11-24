@@ -31,20 +31,22 @@ void header(const AppState& s, const char* title) {
     canvas.setTextDatum(middle_left);
     canvas.drawString(title, 36, 7);
     canvas.setTextDatum(middle_right);
-    std::string cube = s.cubeConnected ? "Cube" : "cube";
+    // A dropped device being reconnected blinks yellow.
+    bool blink = (millis() / 500) % 2;
+    std::string cube = s.cubeConnected ? "Cube" : s.cubeReconnecting ? "Cube.." : "cube";
     if (s.cubeConnected && s.cubeInfo.battery >= 0) cube += " " + std::to_string(s.cubeInfo.battery) + "%";
-    canvas.setTextColor(s.cubeConnected ? TFT_GREEN : DIM);
+    canvas.setTextColor(s.cubeConnected ? TFT_GREEN : s.cubeReconnecting ? (blink ? TFT_YELLOW : DIM) : DIM);
     canvas.drawString(cube.c_str(), W - 4, 7);
     int cw = canvas.textWidth(cube.c_str());
-    canvas.setTextColor(s.robotConnected ? TFT_GREEN : DIM);
-    canvas.drawString(s.robotConnected ? "Robot" : "robot", W - 12 - cw, 7);
+    canvas.setTextColor(s.robotConnected ? TFT_GREEN : s.robotReconnecting ? (blink ? TFT_YELLOW : DIM) : DIM);
+    canvas.drawString(s.robotConnected ? "Robot" : s.robotReconnecting ? "Robot.." : "robot", W - 12 - cw, 7);
 }
 
 /** Draws the scramble word-wrapped; applied moves dim, the next one highlighted. */
 void drawScramble(const AppState& s, int y0, int y1) {
     canvas.setFont(&fonts::Font2);
     canvas.setTextDatum(top_left);
-    bool tracking = s.cubeConnected && s.timer.phase() == SmartTimer::Phase::SCRAMBLING;
+    bool tracking = (s.cubeConnected || s.cubeReconnecting) && s.timer.phase() == SmartTimer::Phase::SCRAMBLING;
     int applied = tracking ? s.timer.applied() : -1;
     int x = 4, y = y0, lineH = 16;
     for (size_t i = 0; i < s.scramble.size(); i++) {
@@ -104,15 +106,17 @@ void drawMain(const AppState& s) {
     uint16_t color = GREY;
     std::string hint;
     using P = SmartTimer::Phase;
+    // Keep the smart timer going while a dropped cube reconnects, so a solve carries on.
+    bool smart = s.cubeConnected || s.cubeReconnecting;
     if (s.tap == TapState::RUNNING) {
         time = stats::format(now - s.tapStartedAt);
         color = TFT_WHITE;
         hint = "Space to stop";
-    } else if (s.tap == TapState::STOPPED && !s.cubeConnected) {
+    } else if (s.tap == TapState::STOPPED && !smart) {
         time = stats::format(s.tapTimeMs);
         color = TFT_YELLOW;
     }
-    if (s.tap != TapState::RUNNING && s.cubeConnected) {
+    if (s.tap != TapState::RUNNING && smart) {
         switch (s.timer.phase()) {
             case P::SCRAMBLING:
                 hint = "Scramble: " + std::to_string(s.timer.applied()) + "/" + std::to_string(s.scramble.size());
@@ -137,7 +141,7 @@ void drawMain(const AppState& s) {
             }
             case P::IDLE: break;
         }
-    } else if (!s.cubeConnected && s.tap == TapState::IDLE) {
+    } else if (!smart && s.tap == TapState::IDLE) {
         hint = s.robotConnected ? "R robot scramble   Space timer" : "C connect   Space timer   H help";
     }
     canvas.setFont(&fonts::Font7);
@@ -154,6 +158,10 @@ void drawMain(const AppState& s) {
     } else if (!s.message.empty() && now - s.messageAt < 3500) {
         canvas.setTextColor(TFT_ORANGE);
         canvas.drawString(s.message.c_str(), W / 2, 116);
+    } else if (s.cubeReconnecting || s.robotReconnecting) {
+        canvas.setTextColor(TFT_YELLOW);
+        canvas.drawString(s.cubeReconnecting ? "Cube lost: reconnecting. Twist to wake" : "Robot lost: reconnecting (K stops)",
+                          W / 2, 116);
     } else if (!hint.empty()) {
         canvas.setTextColor(GREY);
         canvas.drawString(hint.c_str(), W / 2, 116);

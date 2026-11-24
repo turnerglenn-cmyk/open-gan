@@ -68,15 +68,39 @@ void App::loop() {
             s.cubeConnected = false;
             s.cubeInfo = CubeInfo();
             s.orientation.reset();
-            say("Cube disconnected");
+            lost(true);
         }
     }
     if (robot_ && !jobRunning_ && !robot_->connected()) {
         robot_.reset();
         s.robotConnected = false;
         s.orientation.reset();
-        say("Robot disconnected");
+        lost(false);
     }
+}
+
+/**
+ * A device dropped without the user asking (radio noise, out of range, asleep).
+ * The timer and session stay as they are; the worker reconnects it in the background.
+ */
+void App::lost(bool cube) {
+    Lock g(mx);
+    if (!(cube ? cubeTarget_ : robotTarget_)) {
+        say(cube ? "Cube disconnected" : "Robot disconnected");
+        return;
+    }
+    uint32_t now = millis();
+    if (cube) {
+        s.cubeReconnecting = true;
+        cubeLostAt_ = now;
+        nextCubeTry_ = now + 300;
+    } else {
+        s.robotReconnecting = true;
+        robotLostAt_ = now;
+        nextRobotTry_ = now + 300;
+    }
+    say(cube ? "Cube signal lost, reconnecting" : "Robot signal lost, reconnecting");
+    xTaskNotifyGive(static_cast<TaskHandle_t>(worker_));
 }
 
 void App::say(const std::string& m) {
@@ -106,7 +130,13 @@ void App::onCubeEvent(const CubeEvent& e) {
             break;
         case CubeEvent::FACELETS: {
             CubieCube tracked = s.timer.cube();
-            s.timer.onFacelets(e.state);
+            if (cubeResync_) {
+                // Back after a dropout: turns made meanwhile were missed, so trust the cube's state.
+                cubeResync_ = false;
+                s.timer.resync(e.state, e.timestamp);
+            } else {
+                s.timer.onFacelets(e.state);
+            }
             if (e.state.isSolved()) {
                 history_.clear();
                 historyKnown_ = true;
@@ -125,6 +155,7 @@ void App::onCubeEvent(const CubeEvent& e) {
 void App::onPhase(SmartTimer::Phase p) {
     if (p == SmartTimer::Phase::READY) beep(1760, 60);
     if (p != SmartTimer::Phase::FINISHED) return;
+    if (s.timer.result().approximate) say("Solved while disconnected: time is approximate");
     save(uint32_t(std::max<int64_t>(0, s.timer.result().timeMs)));
     newScrambleKeepingTimer();
 }
@@ -167,6 +198,10 @@ void App::armFree() {
 
 void App::tapTimer() {
     Lock g(mx);
+    if (!cube_ && s.cubeReconnecting) {
+        say("Cube reconnecting: twist it to wake it");
+        return;
+    }
     if (cube_) {
         armFree();
         say("Timer armed: turn to start");
@@ -253,11 +288,48 @@ void App::toggleSound() {
 void App::workerMain(void* self) {
     App* a = static_cast<App*>(self);
     for (;;) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        // While something needs reconnecting, wake up regularly to try; jobs still come first.
+        ulTaskNotifyTake(pdTRUE, a->reconnectWanted() ? pdMS_TO_TICKS(250) : portMAX_DELAY);
         Job j = a->pending_;
         a->pending_ = Job::NONE;
         if (j != Job::NONE) a->runJob(j);
+        else a->tryReconnect();
     }
+}
+
+bool App::reconnectWanted() {
+    Lock g(mx);
+    return (s.cubeReconnecting && !cube_) || (s.robotReconnecting && !robot_);
+}
+
+/**
+ * Connect straight to the remembered device: the attempt waits for it to advertise,
+ * so it doubles as a scan. Every couple of seconds for two minutes, then every ten.
+ * A twist wakes a sleeping cube, which then starts advertising again.
+ */
+void App::tryReconnect() {
+    ScannedDevice d;
+    bool cube;
+    {
+        Lock g(mx);
+        uint32_t now = millis();
+        if (cube_) s.cubeReconnecting = false;  // connected again some other way (C)
+        if (robot_) s.robotReconnecting = false;
+        if (s.cubeReconnecting && cubeTarget_ && int32_t(now - nextCubeTry_) >= 0) {
+            d = *cubeTarget_;
+            cube = true;
+        } else if (s.robotReconnecting && robotTarget_ && int32_t(now - nextRobotTry_) >= 0) {
+            d = *robotTarget_;
+            cube = false;
+        } else {
+            return;
+        }
+    }
+    int got = connectNow(d, true);
+    Lock g(mx);
+    uint32_t now = millis();
+    if (cube && got != 1) nextCubeTry_ = now + (now - cubeLostAt_ < 120000 ? 2000 : 10000);
+    if (!cube && got != 2) nextRobotTry_ = now + (now - robotLostAt_ < 120000 ? 2000 : 10000);
 }
 
 bool App::startJob(Job j) {
@@ -297,6 +369,9 @@ void App::connect() { startJob(Job::CONNECT); }
 void App::disconnectAll() {
     Lock g(mx);
     if (jobRunning_) return;
+    cubeTarget_.reset();
+    robotTarget_.reset();
+    s.cubeReconnecting = s.robotReconnecting = false;
     cube_.reset();
     robot_.reset();
     s.cubeConnected = s.robotConnected = false;
@@ -328,36 +403,45 @@ void App::robotCheckOrientation() {
 
 // ---------------------------------------------------------------- connect
 
-int App::connectNow(const ScannedDevice& d) {
-    {
+/** [resume]: a quiet background reconnect of a device that dropped; says nothing on failure. */
+int App::connectNow(const ScannedDevice& d, bool resume) {
+    if (!resume) {
         Lock g(mx);
         s.autoStatus = "Connecting " + d.name + "...";
     }
-    NimBLEClient* c = ble::connect(d.address);
+    NimBLEClient* c = ble::connect(d.address, resume ? 5000 : 8000);
     if (!c) return 0;
-    std::string mac = d.advertisedMac.empty() ? ble::addressString(d.address) : d.advertisedMac;
-    if (auto cube = CubeClient::attach(c, d.name, mac)) {
+    ScannedDevice target = d;
+    if (target.advertisedMac.empty()) target.advertisedMac = ble::addressString(d.address);
+    if (auto cube = CubeClient::attach(c, d.name, target.advertisedMac)) {
         Lock g(mx);
+        if (resume && !s.cubeReconnecting) return 0;  // user disconnected meanwhile; drops the link
         s.cubeName = d.name;
         s.cubeConnected = true;
+        s.cubeReconnecting = false;
         s.orientation.reset();
         cube_ = std::move(cube);
+        cubeTarget_ = target;
+        cubeResync_ = resume;
         prefs.putString("lastCube", addrKey(d.address).c_str());
-        say("Connected " + d.name + " (" + protocolName(cube_->protocol()) + ")");
+        say(resume ? "Cube reconnected" : "Connected " + d.name + " (" + protocolName(cube_->protocol()) + ")");
         return 1;
     }
     if (auto r = RobotClient::attach(c, d.name)) {
         Lock g(mx);
+        if (resume && !s.robotReconnecting) return 0;
         s.robotName = d.name;
         s.robotConnected = true;
+        s.robotReconnecting = false;
         s.orientation.reset();
         robot_ = std::move(r);
+        robotTarget_ = target;
         prefs.putString("lastRobot", addrKey(d.address).c_str());
-        say("Connected GAN Robot");
+        say(resume ? "Robot reconnected" : "Connected GAN Robot");
         return 2;
     }
     ble::release(c);
-    say(d.name + " is not a supported cube or robot");
+    if (!resume) say(d.name + " is not a supported cube or robot");
     return 0;
 }
 

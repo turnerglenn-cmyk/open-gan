@@ -55,6 +55,10 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
     val solves by vm.solves.collectAsStateWithLifecycle()
     val cubeConnected by vm.cubeConnected.collectAsStateWithLifecycle()
     val robotConnected by vm.robotConnected.collectAsStateWithLifecycle()
+    val cubeReconnecting by vm.cubeReconnecting.collectAsStateWithLifecycle()
+    val robotReconnecting by vm.robotReconnecting.collectAsStateWithLifecycle()
+    // Keep the smart timer on screen while a dropped cube reconnects, so a solve carries on.
+    val smartCube = cubeConnected || cubeReconnecting
     val robotProgress by vm.robotProgress.collectAsStateWithLifecycle()
     val cube by vm.cubeState.collectAsStateWithLifecycle()
     val tap by vm.tapTimer.collectAsStateWithLifecycle()
@@ -68,7 +72,17 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
 
     Box(modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (!cubeConnected && !robotConnected) {
+        if (cubeReconnecting || robotReconnecting) {
+            ReconnectingBanner(
+                cube = cubeReconnecting,
+                robot = robotReconnecting,
+                onStop = {
+                    if (cubeReconnecting) vm.devices.disconnectCube()
+                    if (robotReconnecting) vm.devices.disconnectRobot()
+                },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            )
+        } else if (!cubeConnected && !robotConnected) {
             ConnectButton(vm.devices, Modifier.fillMaxWidth().padding(bottom = 8.dp))
         }
         ScrambleText(scramble, applied = (phase as? Phase.Scrambling)?.applied ?: if (phase is Phase.Ready) scramble.size else 0)
@@ -84,11 +98,11 @@ fun TimerScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
         }
 
         Box(
-            Modifier.fillMaxWidth().weight(1f).clickable(enabled = !cubeConnected) { vm.tapTimerPressed() },
+            Modifier.fillMaxWidth().weight(1f).clickable(enabled = !smartCube) { vm.tapTimerPressed() },
             contentAlignment = Alignment.Center,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (cubeConnected) {
+                if (smartCube) {
                     BigTime(
                         smartTimeMs(phase),
                         when (phase) {

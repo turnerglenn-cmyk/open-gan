@@ -14,6 +14,7 @@ import app.opengan.core.cube.Face
 import app.opengan.core.cube.Move
 import app.opengan.core.gan.GanDefinitions
 import app.opengan.core.robot.GanRobotProtocol
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -36,7 +37,7 @@ data class ScannedDevice(
     val looksLikeRobot: Boolean = false,
 )
 
-private enum class Kind { CUBE, ROBOT }
+enum class DeviceKind { CUBE, ROBOT }
 
 /** Owns scanning and the (at most one each) connected cube and robot. */
 @SuppressLint("MissingPermission")
@@ -71,6 +72,22 @@ class DeviceManager(private val context: Context, private val scope: CoroutineSc
     /** What one-tap Connect is doing right now, or null when it isn't running. */
     val autoStatus: StateFlow<String?> = _autoStatus
     private var autoJob: Job? = null
+
+    /**
+     * The cube and robot the user connected. When one drops without the user asking
+     * (radio noise, out of range, asleep), it is reconnected in the background until
+     * it is back or the user disconnects it.
+     */
+    private val targets = mutableMapOf<DeviceKind, ScannedDevice>()
+    private val reconnectJobs = mutableMapOf<DeviceKind, Job>()
+
+    private val _cubeReconnecting = MutableStateFlow(false)
+    /** The cube dropped unexpectedly and is being reconnected. */
+    val cubeReconnecting: StateFlow<Boolean> = _cubeReconnecting
+
+    private val _robotReconnecting = MutableStateFlow(false)
+    /** The robot dropped unexpectedly and is being reconnected. */
+    val robotReconnecting: StateFlow<Boolean> = _robotReconnecting
 
     val bluetoothEnabled: Boolean get() = adapter?.isEnabled == true
 
@@ -129,47 +146,104 @@ class DeviceManager(private val context: Context, private val scope: CoroutineSc
         scope.launch { connectNow(device) }
     }
 
-    /** The device's kind once connected, or null if it isn't a supported cube or robot or the connection failed. */
-    private suspend fun connectNow(device: ScannedDevice): Kind? {
+    /**
+     * The device's kind once connected, or null if it isn't a supported cube or robot or the connection failed.
+     * A [resume] is a quiet background reconnect: it leaves scans alone and reports nothing on failure.
+     */
+    private suspend fun connectNow(device: ScannedDevice, resume: Boolean = false): DeviceKind? {
         val btDevice = adapter?.getRemoteDevice(device.address) ?: return null
-        stopScan()
-        _connecting.value = device.name
+        if (!resume) {
+            stopScan()
+            _connecting.value = device.name
+        }
+        var conn: GattConnection? = null
         try {
-            val conn = GattConnection.connect(context, btDevice)
+            conn = GattConnection.connect(context, btDevice, timeoutMs = if (resume) RECONNECT_TIMEOUT_MS else 15_000)
             val protocol = detectCubeProtocol(conn)
             return when {
                 protocol != null -> {
                     // Android exposes the real address, unlike Web Bluetooth; prefer the advertised one if present.
-                    val cube = GanCubeClient(conn, protocol, device.advertisedMac ?: device.address, scope)
+                    val cube = GanCubeClient(conn, protocol, device.advertisedMac ?: device.address, scope, resumed = resume)
                     cube.start()
                     _cube.value?.disconnect()
                     _cube.value = cube
-                    watchDisconnect(conn) { if (_cube.value === cube) _cube.value = null }
+                    targets[DeviceKind.CUBE] = device
+                    watchDisconnect(conn) { if (_cube.value === cube) lost(DeviceKind.CUBE) }
                     prefs.edit().putString(LAST_CUBE, device.address).apply()
-                    _messages.tryEmit("Connected ${device.name} (${protocol.name.lowercase()})")
-                    Kind.CUBE
+                    _messages.tryEmit(if (resume) "Cube reconnected" else "Connected ${device.name} (${protocol.name.lowercase()})")
+                    DeviceKind.CUBE
                 }
                 GanRobotClient.isRobot(conn) -> {
                     val robot = GanRobotClient(conn)
                     _robot.value?.disconnect()
                     _robot.value = robot
-                    watchDisconnect(conn) { if (_robot.value === robot) _robot.value = null }
+                    targets[DeviceKind.ROBOT] = device
+                    watchDisconnect(conn) { if (_robot.value === robot) lost(DeviceKind.ROBOT) }
                     prefs.edit().putString(LAST_ROBOT, device.address).apply()
-                    _messages.tryEmit("Connected GAN Robot")
-                    Kind.ROBOT
+                    _messages.tryEmit(if (resume) "Robot reconnected" else "Connected GAN Robot")
+                    DeviceKind.ROBOT
                 }
                 else -> {
                     conn.disconnect()
-                    _messages.tryEmit("${device.name} is not a supported cube or robot")
+                    if (!resume) _messages.tryEmit("${device.name} is not a supported cube or robot")
                     null
                 }
             }
+        } catch (e: CancellationException) {
+            conn?.disconnect()
+            throw e
         } catch (e: Exception) {
-            _messages.tryEmit("Could not connect to ${device.name}: ${e.message}")
+            conn?.disconnect()
+            if (!resume) _messages.tryEmit("Could not connect to ${device.name}: ${e.message}")
             return null
         } finally {
-            _connecting.value = null
+            if (!resume) _connecting.value = null
         }
+    }
+
+    /** A device dropped without the user asking: keep the session and get it back. */
+    private fun lost(kind: DeviceKind) {
+        when (kind) {
+            DeviceKind.CUBE -> _cube.value = null
+            DeviceKind.ROBOT -> _robot.value = null
+        }
+        if (targets[kind] == null) return
+        _messages.tryEmit(
+            if (kind == DeviceKind.CUBE) "Cube signal lost. Reconnecting… (twist it if it went to sleep)"
+            else "Robot signal lost. Reconnecting…",
+        )
+        startReconnect(kind)
+    }
+
+    /**
+     * Quietly try to connect straight to the remembered device every few seconds
+     * (less often after a couple of minutes) until it is back or the user disconnects it.
+     * A connect attempt waits for the device to advertise, so it doubles as a scan.
+     */
+    private fun startReconnect(kind: DeviceKind) {
+        if (reconnectJobs[kind]?.isActive == true) return
+        val flag = if (kind == DeviceKind.CUBE) _cubeReconnecting else _robotReconnecting
+        val connected = { if (kind == DeviceKind.CUBE) _cube.value != null else _robot.value != null }
+        flag.value = true
+        reconnectJobs[kind] = scope.launch {
+            val startedAt = SystemClock.elapsedRealtime()
+            try {
+                while (!connected()) {
+                    val target = targets[kind] ?: break
+                    if (bluetoothEnabled && hasPermissions() && connectNow(target, resume = true) == kind) break
+                    val fast = SystemClock.elapsedRealtime() - startedAt < FAST_RETRY_FOR_MS
+                    delay(if (fast) FAST_RETRY_GAP_MS else SLOW_RETRY_GAP_MS)
+                }
+            } finally {
+                flag.value = false
+            }
+        }
+    }
+
+    private fun stopReconnect(kind: DeviceKind) {
+        targets.remove(kind)
+        reconnectJobs.remove(kind)?.cancel()
+        (if (kind == DeviceKind.CUBE) _cubeReconnecting else _robotReconnecting).value = false
     }
 
     /**
@@ -252,12 +326,15 @@ class DeviceManager(private val context: Context, private val scope: CoroutineSc
         _messages.tryEmit(message)
     }
 
+    /** Disconnect on purpose: no reconnecting afterwards. */
     fun disconnectCube() {
+        stopReconnect(DeviceKind.CUBE)
         _cube.value?.disconnect()
         _cube.value = null
     }
 
     fun disconnectRobot() {
+        stopReconnect(DeviceKind.ROBOT)
         _robot.value?.disconnect()
         _robot.value = null
     }
@@ -265,6 +342,12 @@ class DeviceManager(private val context: Context, private val scope: CoroutineSc
     private companion object {
         const val LAST_ROBOT = "last_robot"
         const val LAST_CUBE = "last_cube"
+
+        /** One background connect attempt: long enough for a woken cube to start advertising. */
+        const val RECONNECT_TIMEOUT_MS = 8_000L
+        const val FAST_RETRY_GAP_MS = 2_000L
+        const val FAST_RETRY_FOR_MS = 120_000L
+        const val SLOW_RETRY_GAP_MS = 10_000L
 
         /** A turn and back: enough movement to wake a sleeping smart cube, without changing it. */
         val WAKE_TURNS = listOf(Move(Face.R, 1), Move(Face.R, 3))
