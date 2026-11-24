@@ -20,6 +20,10 @@ No ads, no tracking, no accounts, no internet permission. Funded by donations.
   connects the cube. Remembers your devices so the next time is faster.
 - **Robot + cube together**: put the smart cube in the robot and tap *Robot scramble*.
   The app sees the robot's turns, arms the timer, and you just pick up the cube and solve.
+- **Auto-reconnect**: if the cube or robot drops mid-session (common in rooms full of Wi-Fi and
+  phones), the app quietly reconnects to it in the background. The timer keeps running and the
+  cube's state is read again on reconnect, so a solve in progress carries on. Twist the cube to
+  wake it if it went to sleep.
 - Live 2D cube view, Ao5 / Ao12 / mean, +2 / DNF, solves stored locally in a plain text file.
 - Manual tap timer when no smart cube is connected.
 

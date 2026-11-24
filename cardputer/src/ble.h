@@ -30,8 +30,8 @@ namespace ble {
 void begin();
 /** Blocking scan for GAN devices (cubes and robots), strongest first. */
 std::vector<ScannedDevice> scan(uint32_t ms);
-/** Connect to a device and discover services; nullptr on failure. */
-NimBLEClient* connect(const NimBLEAddress& address);
+/** Connect to a device and discover services; nullptr on failure or after [timeoutMs]. */
+NimBLEClient* connect(const NimBLEAddress& address, uint32_t timeoutMs = 8000);
 void release(NimBLEClient* client);
 std::string addressString(const NimBLEAddress& a);
 }  // namespace ble

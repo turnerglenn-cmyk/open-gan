@@ -18,6 +18,11 @@ your robot and cube.
 - **Smart cube timer**: tracks your scramble move by move (applied moves dim, next move yellow),
   arms itself when the cube is scrambled, starts on the first turn, stops when solved. Times
   come from the cube's own clock.
+- **Auto-reconnect**: if the cube or robot drops (busy 2.4 GHz rooms do this), it reconnects
+  in the background: every couple of seconds at first, then every ten. The header blinks
+  yellow meanwhile, and the timer and session carry on. When it is back it reads the cube's
+  state, so a solve in progress continues. Twist the cube to wake it if it went to sleep.
+  `K` stops trying.
 - Space bar timer when no smart cube is connected.
 - ao5, ao12, ao100, mean, best, +2 / DNF, stored on the Cardputer (up to 1000 solves).
 - Beeps when the cube is ready and when you finish (`M` mutes), and a little confetti.

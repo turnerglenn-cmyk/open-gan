@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import app.opengan.core.cube.CubieCube
 import app.opengan.core.cube.Move
 import app.opengan.core.gan.GanCubeEvent
+import app.opengan.ble.GanCubeClient
 import app.opengan.ble.GanRobotClient
 import app.opengan.core.robot.GanRobotProtocol
 import app.opengan.core.robot.RobotOrientation
@@ -96,11 +97,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val cubeConnected = devices.cube.map { it != null }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val robotConnected = devices.robot.map { it != null }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val cubeReconnecting: StateFlow<Boolean> = devices.cubeReconnecting
+    val robotReconnecting: StateFlow<Boolean> = devices.robotReconnecting
+
+    /** The reconnected cube whose first state report was already used to resync the timer. */
+    private var resyncedCube: GanCubeClient? = null
 
     init {
         viewModelScope.launch { _solves.value = app.solves.load() }
         viewModelScope.launch {
-            devices.cube.flatMapLatest { it?.events ?: emptyFlow() }.collect { onCubeEvent(it) }
+            devices.cube.flatMapLatest { c -> c?.events?.map { c to it } ?: emptyFlow() }.collect { (c, e) -> onCubeEvent(c, e) }
         }
         viewModelScope.launch {
             combine(devices.cube, devices.robot) { c, r -> c to r }.collect { _orientation.value = null }
@@ -108,7 +114,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         newScramble()
     }
 
-    private fun onCubeEvent(e: GanCubeEvent) {
+    private fun onCubeEvent(client: GanCubeClient, e: GanCubeEvent) {
         when (e) {
             is GanCubeEvent.MoveEvent -> {
                 // After a solve the result stays on screen until the cube is turned again.
@@ -120,7 +126,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             is GanCubeEvent.FaceletsEvent -> {
                 val tracked = timer.cube
-                timer.onFacelets(e.state)
+                if (client.resumed && resyncedCube !== client) {
+                    // Back after a dropout: turns made meanwhile were missed, so trust the cube's state.
+                    resyncedCube = client
+                    timer.resync(e.state, e.timestamp)
+                } else {
+                    timer.onFacelets(e.state)
+                }
                 if (e.state.isSolved) history = mutableListOf() else if (e.state != tracked) history = null
             }
             is GanCubeEvent.BatteryEvent -> _cubeInfo.update { it.copy(battery = e.batteryLevel) }
@@ -330,6 +342,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun onSmartSolve(p: SmartTimer.Phase.Finished) {
+        if (p.result.approximate) devices.report("Solved while the cube was disconnected: the time runs until it came back")
         save(Solve(System.currentTimeMillis(), p.result.timeMs, p.result.scramble, p.result.solution))
         newScrambleKeepingTimer()
     }

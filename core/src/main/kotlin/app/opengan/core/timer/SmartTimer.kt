@@ -41,6 +41,13 @@ class SmartTimer(private val listener: (Phase) -> Unit = {}) {
 
     private var scrambleStates: List<CubieCube> = emptyList()
     private val solveMoves = mutableListOf<TimedMove>()
+    private var startedAt = 0L
+
+    /**
+     * The cube reconnected during this solve. Cube timestamps may restart on a new
+     * connection, so the time comes from local timestamps instead of the cube's clock.
+     */
+    private var spliced = false
 
     /** Set a scramble to apply. Progress is measured against states reached from solved. */
     fun setScramble(scramble: List<Move>) {
@@ -68,6 +75,30 @@ class SmartTimer(private val listener: (Phase) -> Unit = {}) {
         if (phase is Phase.Scrambling) checkScrambled()
     }
 
+    /**
+     * The cube reconnected after an unexpected disconnect and reported its full state.
+     * Turns made while it was away are lost, so take the cube's word for its state:
+     * a solve in progress carries on (and stops now if the cube is already solved),
+     * scramble tracking picks up where the cube is, and a Ready timer whose cube was
+     * turned meanwhile goes back to scrambling. [now] is the local time of the report.
+     */
+    fun resync(state: CubieCube, now: Long) {
+        val changed = state != cube
+        cube = state
+        when (val p = phase) {
+            is Phase.Running -> {
+                spliced = true
+                if (cube.isSolved) finish(p.scramble, endedAt = now)
+            }
+            is Phase.Scrambling -> checkScrambled()
+            is Phase.Ready -> if (changed && p.scramble != null && scrambleStates.isNotEmpty()) {
+                phase = Phase.Scrambling(p.scramble, matchedPrefix())
+                checkScrambled()
+            }
+            Phase.Idle, is Phase.Finished -> Unit
+        }
+    }
+
     fun onMove(move: Move, localTimestamp: Long?, cubeTimestamp: Long?) {
         cube = cube.apply(move)
         when (val p = phase) {
@@ -75,7 +106,9 @@ class SmartTimer(private val listener: (Phase) -> Unit = {}) {
             is Phase.Ready -> {
                 solveMoves.clear()
                 solveMoves += TimedMove(move.toString(), localTimestamp, cubeTimestamp)
-                phase = Phase.Running(p.scramble, localTimestamp ?: 0L, 1)
+                startedAt = localTimestamp ?: 0L
+                spliced = false
+                phase = Phase.Running(p.scramble, startedAt, 1)
                 if (cube.isSolved) finish(p.scramble) // e.g. undoing a one-move scramble
             }
             is Phase.Running -> {
@@ -98,7 +131,21 @@ class SmartTimer(private val listener: (Phase) -> Unit = {}) {
         }
     }
 
-    private fun finish(scramble: List<Move>?) {
+    /** [endedAt]: the solve ended while the cube was disconnected; it was seen solved at this local time. */
+    private fun finish(scramble: List<Move>?, endedAt: Long? = null) {
+        if (spliced || endedAt != null) {
+            val end = endedAt ?: solveMoves.mapNotNull { it.localTimestamp }.lastOrNull() ?: startedAt
+            phase = Phase.Finished(
+                SolveResult(
+                    timeMs = (end - startedAt).coerceAtLeast(0),
+                    scramble = scramble?.let(Move::format).orEmpty(),
+                    solution = solveMoves.joinToString(" ") { it.move },
+                    approximate = endedAt != null,
+                ),
+            )
+            spliced = false
+            return
+        }
         val fitted = TimestampFit.fit(solveMoves)
         val time = fitted.last().cubeTimestamp!! - fitted.first().cubeTimestamp!!
         phase = Phase.Finished(
@@ -118,6 +165,11 @@ data class SolveResult(
     val solution: String,
     /** Fitted per-move times in ms from the first move, for reconstructions. */
     val moveTimestamps: List<Long> = emptyList(),
+    /**
+     * The cube was disconnected when the solve ended, so the time runs to when it
+     * reconnected and was seen solved, and the solution misses the last turns.
+     */
+    val approximate: Boolean = false,
 ) {
     val moveCount: Int get() = if (solution.isBlank()) 0 else solution.split(' ').size
 

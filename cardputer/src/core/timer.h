@@ -41,6 +41,8 @@ struct SolveResult {
     std::string scramble;
     std::string solution;
     int moveCount = 0;
+    /** The cube was disconnected when the solve ended: time runs to when it came back solved. */
+    bool approximate = false;
     double tps() const { return timeMs <= 0 ? 0 : std::max(moveCount - 1, 0) * 1000.0 / double(timeMs); }
 };
 
@@ -66,11 +68,19 @@ public:
     void reset();
     void onFacelets(const CubieCube& state);
     void onMove(const Move& move, int64_t localTs, int64_t cubeTs);
+    /**
+     * The cube reconnected after an unexpected disconnect and reported its full state.
+     * Turns made while it was away are lost, so take the cube's word for its state:
+     * a solve in progress carries on (and stops now if the cube is already solved),
+     * scramble tracking picks up where the cube is, and a Ready timer whose cube was
+     * turned meanwhile goes back to scrambling. [now] is the local time of the report.
+     */
+    void resync(const CubieCube& state, int64_t now);
 
 private:
     void setPhase(Phase p);
     void checkScrambled();
-    void finish();
+    void finish(int64_t endedAt = NO_TS);
 
     CubieCube cube_;
     Phase phase_ = Phase::IDLE;
@@ -81,6 +91,8 @@ private:
     int64_t startedAt_ = 0;
     std::vector<TimedMove> solveMoves_;
     SolveResult result_;
+    /** Reconnected during this solve: a new link may restart the cube clock, so time it locally. */
+    bool spliced_ = false;
 };
 
 enum class Penalty : uint8_t { NONE = 0, PLUS_TWO = 1, DNF = 2 };

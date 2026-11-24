@@ -23,6 +23,8 @@ class GanCubeClient(
     val protocol: GanProtocol,
     mac: String,
     private val scope: CoroutineScope,
+    /** Reconnected on its own after the link dropped: its first state report resyncs the timer. */
+    val resumed: Boolean = false,
 ) : CubeLink {
 
     private val ids = when (protocol) {

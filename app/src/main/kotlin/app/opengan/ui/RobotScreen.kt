@@ -35,6 +35,7 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
     val canSolve by vm.canSolve.collectAsStateWithLifecycle()
     val cubeConnected by vm.cubeConnected.collectAsStateWithLifecycle()
     val orientation by vm.orientation.collectAsStateWithLifecycle()
+    val robotReconnecting by vm.robotReconnecting.collectAsStateWithLifecycle()
     var manual by rememberSaveable { mutableStateOf("") }
     var manualError by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -43,7 +44,9 @@ fun RobotScreen(vm: MainViewModel, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("GAN Robot", style = MaterialTheme.typography.headlineSmall)
-        if (!robotConnected) {
+        if (robotReconnecting) {
+            ReconnectingBanner(cube = false, robot = true, onStop = vm.devices::disconnectRobot, modifier = Modifier.fillMaxWidth())
+        } else if (!robotConnected) {
             Text("No robot connected. Turn the robot on and tap Connect. If your smart cube is in the robot, the robot wakes it and it connects too. No smart cube is needed to scramble.")
             ConnectButton(vm.devices, Modifier.fillMaxWidth())
         }

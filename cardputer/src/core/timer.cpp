@@ -111,6 +111,7 @@ void SmartTimer::onMove(const Move& move, int64_t localTs, int64_t cubeTs) {
             solveMoves_.clear();
             solveMoves_.push_back({move, localTs, cubeTs});
             startedAt_ = localTs == NO_TS ? 0 : localTs;
+            spliced_ = false;
             setPhase(Phase::RUNNING);
             if (cube_.isSolved()) finish();
             break;
@@ -118,6 +119,31 @@ void SmartTimer::onMove(const Move& move, int64_t localTs, int64_t cubeTs) {
             solveMoves_.push_back({move, localTs, cubeTs});
             if (cube_.isSolved()) finish();
             else setPhase(Phase::RUNNING);
+            break;
+        default: break;
+    }
+}
+
+void SmartTimer::resync(const CubieCube& state, int64_t now) {
+    bool changed = state != cube_;
+    cube_ = state;
+    switch (phase_) {
+        case Phase::RUNNING:
+            spliced_ = true;
+            if (cube_.isSolved()) finish(now);
+            break;
+        case Phase::SCRAMBLING: checkScrambled(); break;
+        case Phase::READY:
+            if (changed && hasScramble_ && !states_.empty()) {
+                applied_ = 0;
+                for (int i = int(states_.size()) - 1; i >= 0; i--)
+                    if (states_[i] == cube_) {
+                        applied_ = i;
+                        break;
+                    }
+                setPhase(Phase::SCRAMBLING);
+                checkScrambled();
+            }
             break;
         default: break;
     }
@@ -140,13 +166,24 @@ void SmartTimer::checkScrambled() {
     }
 }
 
-void SmartTimer::finish() {
-    std::vector<TimedMove> fitted = fitTimestamps(solveMoves_);
+void SmartTimer::finish(int64_t endedAt) {
     result_ = SolveResult();
-    result_.timeMs = fitted.back().cubeTs - fitted.front().cubeTs;
-    if (hasScramble_) result_.scramble = formatMoves(scramble_);
     Moves sol;
-    for (const TimedMove& t : fitted) sol.push_back(t.move);
+    if (spliced_ || endedAt != NO_TS) {
+        int64_t end = endedAt;
+        for (const TimedMove& t : solveMoves_)
+            if (endedAt == NO_TS && t.localTs != NO_TS) end = t.localTs;
+        if (end == NO_TS) end = startedAt_;
+        result_.timeMs = std::max<int64_t>(0, end - startedAt_);
+        result_.approximate = endedAt != NO_TS;
+        for (const TimedMove& t : solveMoves_) sol.push_back(t.move);
+        spliced_ = false;
+    } else {
+        std::vector<TimedMove> fitted = fitTimestamps(solveMoves_);
+        result_.timeMs = fitted.back().cubeTs - fitted.front().cubeTs;
+        for (const TimedMove& t : fitted) sol.push_back(t.move);
+    }
+    if (hasScramble_) result_.scramble = formatMoves(scramble_);
     result_.solution = formatMoves(sol);
     result_.moveCount = int(sol.size());
     setPhase(Phase::FINISHED);

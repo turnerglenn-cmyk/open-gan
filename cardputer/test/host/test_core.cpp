@@ -325,6 +325,56 @@ static void testRobotSolve() {
     }
 }
 
+static void testTimerResync() {
+    using P = SmartTimer::Phase;
+    auto ready = [](SmartTimer& t) {
+        t.setScramble(mv("R U F"));
+        t.onMove(Move(R, 1), 1, NO_TS);
+        t.onMove(Move(U, 1), 2, NO_TS);
+        t.onMove(Move(F, 1), 3, NO_TS);
+    };
+    {  // Solve carries on after a dropout; the new link's cube clock restarted.
+        SmartTimer t;
+        ready(t);
+        CHECK(t.phase() == P::READY);
+        t.onMove(Move(F, 3), 10000, 90000);
+        t.resync(CubieCube::solved().apply(mv("R")), 12000);
+        CHECK(t.phase() == P::RUNNING);
+        t.onMove(Move(R, 3), 13500, 40);
+        CHECK(t.phase() == P::FINISHED);
+        CHECK_EQ(t.result().timeMs, 3500);
+        CHECK(!t.result().approximate);
+    }
+    {  // Solved while disconnected: stops when it comes back.
+        SmartTimer t;
+        ready(t);
+        t.onMove(Move(F, 3), 10000, 0);
+        t.resync(CubieCube::solved(), 14000);
+        CHECK(t.phase() == P::FINISHED);
+        CHECK_EQ(t.result().timeMs, 4000);
+        CHECK(t.result().approximate);
+    }
+    {  // Scramble tracking picks up the reported state.
+        SmartTimer t;
+        t.setScramble(mv("R U F"));
+        t.onMove(Move(R, 1), 1, NO_TS);
+        t.resync(CubieCube::solved().apply(mv("R U")), 2);
+        CHECK(t.phase() == P::SCRAMBLING);
+        CHECK_EQ(t.applied(), 2);
+        t.resync(CubieCube::solved().apply(mv("R U F")), 3);
+        CHECK(t.phase() == P::READY);
+    }
+    {  // A Ready cube turned while away goes back to scrambling; an unchanged one stays Ready.
+        SmartTimer t;
+        ready(t);
+        t.resync(CubieCube::solved().apply(mv("R U F")), 5);
+        CHECK(t.phase() == P::READY);
+        t.resync(CubieCube::solved().apply(mv("R U")), 6);
+        CHECK(t.phase() == P::SCRAMBLING);
+        CHECK_EQ(t.applied(), 2);
+    }
+}
+
 int main() {
     testCube();
     testAes();
@@ -333,6 +383,7 @@ int main() {
     testGen3();
     testGen4History();
     testTimer();
+    testTimerResync();
     testRobotProtocol();
     testRobotSolve();
     printf("%d checks, %d failures\n", checks, failures);

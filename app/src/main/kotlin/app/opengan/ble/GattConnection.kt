@@ -153,11 +153,11 @@ class GattConnection private constructor(val device: BluetoothDevice) {
     companion object {
         private val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-        suspend fun connect(context: Context, device: BluetoothDevice): GattConnection {
+        suspend fun connect(context: Context, device: BluetoothDevice, timeoutMs: Long = 15_000): GattConnection {
             val conn = GattConnection(device)
             conn.gatt = device.connectGatt(context, false, conn.callback, BluetoothDevice.TRANSPORT_LE)
             try {
-                withTimeout(15_000) { conn.connected.await() }
+                withTimeout(timeoutMs) { conn.connected.await() }
                 conn.discoverServices()
             } catch (e: Exception) {
                 conn.disconnect()
